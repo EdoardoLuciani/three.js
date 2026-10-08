@@ -98,6 +98,9 @@ class RenderObjects {
 	 */
 	get( object, material, scene, camera, lightsNode, renderContext, clippingContext, passId ) {
 
+		lightsNode = material.lightsNode || lightsNode;
+		lightsNode.updateBeforeRender( this.renderer );
+
 		const chainMap = this.getChainMap( passId );
 
 		// set chain keys

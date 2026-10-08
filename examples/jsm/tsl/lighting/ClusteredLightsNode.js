@@ -83,6 +83,17 @@ class ClusteredLightsNode extends LightsNode {
 
 	}
 
+	/**
+	 * Resizes the cluster grid before cached render objects are selected.
+	 *
+	 * @param {Renderer} renderer - The renderer.
+	 */
+	updateBeforeRender( renderer ) {
+
+		this.updateProgram( renderer );
+
+	}
+
 	customCacheKey() {
 
 		return ( this._compute ? this._compute.getCacheKey() : 0 ) + super.customCacheKey();
@@ -445,8 +456,7 @@ class ClusteredLightsNode extends LightsNode {
 
 		if ( lightIndexes === null || lightIndexes.value.array.length < lightIndexesLength ) {
 
-			// TODO: Free the outgoing buffer once the renderer destroys the GPU resources of
-			// standalone storage attributes (`Bindings._destroyBindings()` skips storage buffers).
+			if ( lightIndexes !== null ) lightIndexes.value.dispose();
 
 			const lightIndexesArray = new Int32Array( lightIndexesLength );
 			lightIndexes = attributeArray( lightIndexesArray, 'ivec4' ).setName( 'lightIndexes' );
@@ -607,6 +617,8 @@ class ClusteredLightsNode extends LightsNode {
 	dispose() {
 
 		if ( this._compute !== null ) this._compute.dispose();
+
+		if ( this._lightIndexes !== null ) this._lightIndexes.value.dispose();
 
 		this._lightsTexture.dispose();
 		this._zSliceRangesTexture.dispose();

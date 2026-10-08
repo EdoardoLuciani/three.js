@@ -145,6 +145,13 @@ class LightsNode extends Node {
 	}
 
 	/**
+	 * Prepares lighting resources before a render object's cache key is checked.
+	 *
+	 * @param {Renderer} renderer - The renderer.
+	 */
+	updateBeforeRender( /* renderer */ ) {}
+
+	/**
 	 * Overwrites the default {@link Node#customCacheKey} implementation by including
 	 * light data into the cache key.
 	 *
