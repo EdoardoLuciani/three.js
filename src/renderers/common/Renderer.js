@@ -3757,13 +3757,14 @@ class Renderer {
 			const hasMap = material.map && material.map.isTexture;
 			const hasColorNode = material.colorNode && material.colorNode.isNode;
 			const hasCastShadowNode = material.castShadowNode && material.castShadowNode.isNode;
+			const hasCastShadowOpacityNode = material.castShadowOpacityNode && material.castShadowOpacityNode.isNode;
 			const hasMaskNode = ( material.maskShadowNode && material.maskShadowNode.isNode ) || ( material.maskNode && material.maskNode.isNode );
 
 			let positionNode = null;
 			let colorNode = null;
 			let depthNode = null;
 
-			if ( hasMap || hasColorNode || hasCastShadowNode || hasMaskNode ) {
+			if ( hasMap || hasColorNode || hasCastShadowNode || hasCastShadowOpacityNode || hasMaskNode ) {
 
 				let shadowRGB;
 				let shadowAlpha;
@@ -3786,15 +3787,23 @@ class Renderer {
 
 				}
 
-				if ( hasMap ) {
+				if ( hasCastShadowOpacityNode ) {
 
-					shadowAlpha = shadowAlpha.mul( reference( 'map', 'texture', material ).a );
+					shadowAlpha = shadowAlpha.mul( material.castShadowOpacityNode );
 
-				}
+				} else {
 
-				if ( hasColorNode ) {
+					if ( hasMap ) {
 
-					shadowAlpha = shadowAlpha.mul( material.colorNode.a );
+						shadowAlpha = shadowAlpha.mul( reference( 'map', 'texture', material ).a );
+
+					}
+
+					if ( hasColorNode ) {
+
+						shadowAlpha = shadowAlpha.mul( material.colorNode.a );
+
+					}
 
 				}
 

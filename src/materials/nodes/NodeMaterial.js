@@ -339,6 +339,28 @@ class NodeMaterial extends Material {
 		this.castShadowNode = null;
 
 		/**
+		 * Overrides the alpha contribution of `map` and `colorNode` when casting
+		 * shadows. The result is still multiplied by the alpha of `castShadowNode`,
+		 * if present. Shadow masks, `alphaMap` and alpha testing are not bypassed.
+		 * Fractional shadow opacity requires `renderer.shadowMap.transmitted = true`.
+		 *
+		 * For a fully opaque surface, this avoids building its color graph just to
+		 * extract alpha:
+		 *
+		 * ```js
+		 * material.castShadowOpacityNode = float( 1 );
+		 * ```
+		 *
+		 * The skipped map and color graphs are not evaluated for shadow opacity.
+		 * Any required discard or other side effects must instead be included in
+		 * this node or {@link NodeMaterial#maskShadowNode}.
+		 *
+		 * @type {?Node<float>}
+		 * @default null
+		 */
+		this.castShadowOpacityNode = null;
+
+		/**
 		 * This node can be used to overwrite the final output of the material.
 		 *
 		 * Unlike {@link NodeMaterial#fragmentNode}, the built-in material logic
