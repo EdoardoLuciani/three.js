@@ -1,8 +1,6 @@
 import DataMap from './DataMap.js';
 import { AttributeType } from './Constants.js';
 
-import { DynamicDrawUsage } from '../../constants.js';
-
 let _generation = 0;
 
 /**
@@ -159,7 +157,7 @@ class Attributes extends DataMap {
 
 		} else {
 
-			if ( data.version < attribute.version || attribute.usage === DynamicDrawUsage ) {
+			if ( data.version < attribute.version ) {
 
 				this.backend.updateAttribute( attribute );
 
