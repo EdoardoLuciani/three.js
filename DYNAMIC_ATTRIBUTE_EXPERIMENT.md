@@ -18,8 +18,8 @@ has failures beyond its previously observed baseline failures.**
 This is still not a drop-in compatibility-complete change: raw TypedArray inputs
 to `dynamicBufferAttribute()` no longer automatically reflect unpublished
 mutations. That API-policy question is intentionally unchanged by this follow-up.
-Nothing has been pushed or submitted upstream. No game dependency, game code,
-renderer hooks, or update-policy framework was added.
+This change is for review in the owner's fork, not an upstream submission. No
+game dependency, game code, renderer hooks, or update-policy framework was added.
 
 ## Implementation
 
