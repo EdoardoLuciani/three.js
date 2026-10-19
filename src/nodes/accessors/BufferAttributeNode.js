@@ -1,4 +1,5 @@
 import InputNode from '../core/InputNode.js';
+import { NodeUpdateType } from '../core/constants.js';
 import { addMethodChaining, mat3, mat4 } from '../tsl/TSLCore.js';
 import { varying } from '../core/VaryingNode.js';
 
@@ -10,7 +11,7 @@ import { StaticDrawUsage, DynamicDrawUsage } from '../../constants.js';
  * Internal buffer attribute library.
  *
  * @private
- * @type {WeakMap<TypedArray, InterleavedBuffer>}
+ * @type {WeakMap<TypedArray|BufferAttribute, Map<number, InterleavedBuffer>>}
  */
 const _bufferLib = new WeakMap();
 
@@ -20,17 +21,26 @@ const _bufferLib = new WeakMap();
  * @private
  * @param {TypedArray} value - The attribute data.
  * @param {number} itemSize - The attribute item size.
+ * @param {TypedArray|BufferAttribute} [source=value] - The owner of the data and update version.
  * @returns {InterleavedBuffer} The interleaved buffer.
  */
-function _getBufferAttribute( value, itemSize ) {
+function _getBufferAttribute( value, itemSize, source = value ) {
 
-	let buffer = _bufferLib.get( value );
+	let buffers = _bufferLib.get( source );
+
+	if ( buffers === undefined ) {
+
+		buffers = new Map();
+		_bufferLib.set( source, buffers );
+
+	}
+
+	let buffer = buffers.get( itemSize );
 
 	if ( buffer === undefined ) {
 
 		buffer = new InterleavedBuffer( value, itemSize );
-
-		_bufferLib.set( value, buffer );
+		buffers.set( itemSize, buffer );
 
 	}
 
@@ -152,6 +162,11 @@ class BufferAttributeNode extends InputNode {
 			this.usage = value.usage;
 			this.instanced = value.isInstancedBufferAttribute;
 
+		} else if ( value && value.isBufferAttribute === true ) {
+
+			// Wrapped attributes must publish their source version before geometry uploads.
+			this.updateBeforeType = NodeUpdateType.OBJECT;
+
 		}
 
 	}
@@ -239,7 +254,7 @@ class BufferAttributeNode extends InputNode {
 
 		} else if ( value.isBufferAttribute === true ) {
 
-			buffer = _getBufferAttribute( value.array, stride );
+			buffer = _getBufferAttribute( value.array, stride, value );
 
 		} else {
 
@@ -253,6 +268,27 @@ class BufferAttributeNode extends InputNode {
 
 		this.attribute = bufferAttribute;
 		this.attribute.isInstancedBufferAttribute = this.instanced; // @TODO: Add a possible: InstancedInterleavedBufferAttribute
+
+	}
+
+	/**
+	 * Synchronizes a wrapped source attribute before the geometry upload.
+	 */
+	updateBefore() {
+
+		const source = this.value;
+		const buffer = this.attribute.data;
+
+		if ( buffer.version !== source.version ) {
+
+			buffer.array = source.array;
+			buffer.count = source.array.length / buffer.stride;
+			// Borrow the ranges: the GPU upload, not an individual column node,
+			// consumes them. All columns share the same backing buffer.
+			buffer.updateRanges = source.updateRanges;
+			buffer.version = source.version;
+
+		}
 
 	}
 

@@ -1,177 +1,205 @@
 # Local experiment: version-driven dynamic attribute uploads
 
-## Scope
+## Current scope and result
 
 Base: fork `origin/dev`, `0978e2b62e53654ebe1a2c3032ebee0a4981c701`.
 Branch: `experiment/versioned-dynamic-attributes`.
 
-The only runtime change is deleting `|| attribute.usage === DynamicDrawUsage`
-from `src/renderers/common/Attributes.js` and removing its unused import. No new
-update policy, source-version forwarding, renderer hooks, or game changes were
-added. Nine focused QUnit tests and this experiment record accompany it.
+The initial experiment, commit `63f454ce8`, removed
+`|| attribute.usage === DynamicDrawUsage` from the common attribute upload rule.
+It demonstrated unnecessary unchanged uploads, but exposed a matrix-wrapper
+regression: even an explicit source `needsUpdate` was lost.
 
-**Result: useful for ordinary versioned attributes, but the deletion alone is
-not a compatibility-complete fix. A real matrix-attribute regression remains.**
-No tests were disabled or changed to accept the regression. This is a local
-experiment, not a merge-ready patch or an upstream submission.
+The follow-up retains that deletion and adds source-version forwarding in
+`src/nodes/accessors/BufferAttributeNode.js`. **The explicitly published matrix
+updates now work, all 15 focused tests pass, and neither full-suite configuration
+has failures beyond its previously observed baseline failures.**
 
-## Test results
+This is still not a drop-in compatibility-complete change: raw TypedArray inputs
+to `dynamicBufferAttribute()` no longer automatically reflect unpublished
+mutations. That API-policy question is intentionally unchanged by this follow-up.
+Nothing has been pushed or submitted upstream. No game dependency, game code,
+renderer hooks, or update-policy framework was added.
 
-Clean `PUPPETEER_SKIP_DOWNLOAD=1 npm ci`: passed, no vulnerabilities reported.
-Browser: temporary official Chrome Beta 153.0.8010.12.
+## Implementation
 
-### Existing suite
+Matrix helpers split `mat3`/`mat4` data into three/four column nodes. A supplied
+BufferAttribute with itemSize greater than four is wrapped in an internal
+InterleavedBuffer; smaller BufferAttributes already retain the original source.
+The deletion-only patch revealed that the wrapper did not follow its source's
+version. The old unconditional dynamic uploads masked that missing propagation.
 
-The unmodified base's `npm test` already failed three core tests in its default
-software-GPU configuration:
+The follow-up:
 
-- `textureBarrier`: unsupported RGBA32Float read/write storage texture access.
+- Schedules wrapped BufferAttributes through existing `NodeUpdateType.OBJECT`
+  `updateBefore` callbacks, before geometry uploads. Ordinary node `update()` is
+  later in the rendering sequence and is not the right place.
+- Synchronizes the source array, count, dirty-range reference, and version when
+  the version changes. This applies regardless of usage, not just DynamicDrawUsage.
+- Borrows the source ranges rather than copying/clearing them in a column callback.
+  The actual backend upload consumes them. This preserves ranges published between
+  callbacks and avoids premature consumption by one of the column views.
+- Keys cached wrappers by the actual source owner and stride. Columns of one
+  source/layout share backing; independent version owners that alias one array,
+  or different strides, do not accidentally share version/layout state.
+
+Unchanged callbacks perform a constant-time version comparison, not an array
+scan. Caches are populated during setup, not allocated per draw. The node change
+is 42 added / 6 removed lines; the common Attributes deletion is unchanged.
+Same-size source-array replacement is covered; buffer resizing is not introduced
+as a supported feature.
+
+## Focused regression tests
+
+The committed tests exercise actual Attributes, WebGPUAttributeUtils,
+BufferAttributeNode, and NodeFrame with a recording queue. The node harness runs
+all `updateBefore` callbacks before geometry uploads, matching Renderer ordering.
+The original matrix guard still checks that the published translation reaches
+GPU upload data; it now also exercises all four columns and unchanged suppression.
+No test was disabled, marked TODO, or weakened to hide a failure.
+
+| Runtime under the current 15 tests | Passed | Failed |
+| --- | ---: | ---: |
+| Deletion only, original BufferAttributeNode served as a negative control | 8 | 7 |
+| Deletion plus source forwarding | **15** | **0** |
+
+Coverage includes unchanged static/dynamic/stream buffers; full and partial
+updates; consumed and multiple ranges; shared interleaved views; allocation
+recreation; explicitly published matrix changes; multiple versions in one
+NodeFrame; ranges published between callbacks; aliased but independent owners;
+different strides; mat3 columns; and same-size array replacement.
+
+Historically, the initial nine-test deletion-only experiment had eight passes
+and one real matrix regression. The additional tests strengthen that coverage;
+the previous failure evidence is retained in the initial commit and local logs.
+
+## Full suites and clean install
+
+Browser: temporary official Chrome Beta 153.0.8010.12. A fresh
+`PUPPETEER_SKIP_DOWNLOAD=1 npm ci` passed. No vulnerabilities were reported.
+Validation was repeated after that clean install.
+
+| Configuration | Total | Passed | TODO | Failed |
+| --- | ---: | ---: | ---: | ---: |
+| Default `npm test` core page | 1,983 | 1,979 | 1 | 3 |
+| Hardware AMD RDNA-4 WebGPU core page | 1,983 | 1,980 | 1 | 2 |
+| Separate default add-on suite | 116 | 116 | 0 | 0 |
+
+The default failures are the same three observed on the original base:
+
+- `textureBarrier`: unsupported RGBA32Float read/write storage-texture access.
 - WebGL `triNoise3D` deterministic-output assertion.
 - WebGL negative-operand integer `mod` assertions.
 
-The final patched suite has 1,977 core tests: 1,972 passed, one TODO, four failed.
-Three failures are the same baseline failures; the additional failure is the new
-matrix-attribute compatibility regression below. Since `npm test` stops at core
-failure, add-ons were run separately: **116 passed** on both baseline and patch.
+The hardware failures are the same two observed on the original base:
 
-A separate runner also ran the full, unchanged test page using hardware AMD
-RDNA-4 WebGPU (nonfallback). Both versions have existing subgroupBallot assertions
-that assume <=32 lanes, while this adapter uses 64, and the same WebGL `mod`
-failure. The final patch has **1,973 passed, one TODO, three failed**: those two
-existing failures and the new matrix compatibility failure. The control with the
-same nine new tests has 1,969 passed, one TODO, seven failed: five deliberately
-new upload-suppression assertions fail against the old policy, plus the two
-existing failures. Its matrix compatibility test passes.
+- `subgroupBallot` assertions assume <=32 lanes; this adapter uses 64.
+- The same WebGL integer `mod` assertions.
 
-`npm run build`, source/test ESLint, and `git diff --check`: passed. Generated
-build output was restored after validation and is not part of the change.
-The complete examples screenshot suite was not run.
+A fresh hardware control serving both original runtime files with the same 15
+new tests reports 1,968 passed, one TODO, and 14 failed. Twelve failures are the
+new behavior/regression assertions; only the two listed above are failures in
+the pre-existing suite. Do not interpret those intentionally new assertions as
+14 pre-existing failures, or describe the patched full suites as green.
 
-### Focused tests
-
-| Test group | Original runtime | Deletion-only runtime |
-| --- | --- | --- |
-| Eight versioning/range/allocation tests | 3 pass, 5 fail | **8 pass** |
-| Matrix BufferAttribute node source-version compatibility | **Pass** | **Fail** |
-
-The tests use actual `Attributes`, `WebGPUAttributeUtils`, and, for the matrix
-case, `BufferAttributeNode`, with a recording queue. They cover unchanged static,
-dynamic and stream attributes; full and partial dirty uploads; range consumption;
-multiple ranges; shared interleaved views across repeated updates; and allocation
-recreation. The compatibility guard remains a normal failing `QUnit.test`, not a
-TODO or a weakened assertion.
+`npm test` runs source lint before core tests and stops on core failure; add-ons
+were therefore run separately. Source/test ESLint, `npm run build`, script syntax,
+and `git diff --check` passed. Generated build changes were restored. The complete
+examples screenshot suite was not run.
 
 ## Paired hardware-WebGPU rendering
 
-A separate fixture rendered actual scenes into 32x32 render targets and read back
-all RGBA bytes. Two independent control/patch pairs were run; every run selected
-nonfallback AMD RDNA-4 WebGPU with no page errors or console errors. The control
-serves the exact original `Attributes.js` before module loading; all other source
-files are identical. Only public WebGPU calls are wrapped for diagnostic counts.
+The extended fixture renders actual scenes into 32x32 targets and reads all RGBA
+bytes. Two independent control/patch pairs selected nonfallback AMD RDNA-4 WebGPU,
+with zero page errors and zero console errors. Controls serve both original
+Attributes.js and BufferAttributeNode.js before module loading; other source is
+identical. Only public WebGPU writes are wrapped for diagnostic counts.
 
-Seven versioned cases produced **zero byte differences across 245,760 paired
-image bytes**, with non-vacuous visible geometry/color changes:
+Nine versioned cases have **zero differences across 327,680 paired image bytes**,
+excluding the separately assessed source-array-replacement stage below:
 
-- Ordinary dynamic geometry: full updates, partial updates, and a second camera.
-- Dynamic interleaved positions/colors.
-- Instancing with capacity 1 (matrix UBO path).
-- Instancing with capacity 4,097 (matrix vertex-attribute path).
+- Dynamic geometry with full/partial updates and a second camera.
+- Dynamic interleaved position/color data.
+- Instancing capacities 1 (UBO path) and 4,097 (vertex-attribute path).
 - Real shadow and beauty passes sharing dynamic geometry.
-- TSL dynamic attributes backed by an application-owned `InterleavedBuffer`.
-- TSL dynamic attributes backed directly by a vec3 `BufferAttribute`.
+- TSL data backed by an owned InterleavedBuffer or direct vec3 BufferAttribute.
+- Wrapped mat4 data: published full/partial updates, another camera, consumed
+  ranges, and an explicit whole-buffer update after a partial update.
+- Wrapped mat3 data with partial updates.
 
-Representative unchanged-buffer writes per fixture stage:
+Both control and patch visibly change in every versioned case, so comparisons
+are not vacuous. The previously frozen matrix translation now moves correctly.
 
-| Path | Control | Patch |
+Representative writes per fixture stage:
+
+| Stage | Original | Patch |
 | --- | ---: | ---: |
-| Ordinary dynamic position attribute | 1 | 0 |
-| Dynamic interleaved buffer | 1 | 0 |
-| Large-capacity instanced matrices/colors | 2 | 0 |
-| Shadow + beauty position buffer | 2 | 0 |
+| Unchanged ordinary dynamic positions | 1 | 0 |
+| Unchanged large-instanced matrices/colors | 2 | 0 |
+| Unchanged shadow + beauty positions | 2 | 0 |
+| Changed shadow + beauty positions | 2 | 1 |
+| Unchanged wrapped mat4, including another camera | 1 | 0 |
+| Published full mat4 update | 1 x 192 bytes | 1 x 192 bytes |
+| Three disjoint mat4 component ranges | 1 x 192 bytes | 3 x 4 bytes |
+| Three disjoint mat3 component ranges | 1 x 108 bytes | 3 x 4 bytes |
 
-A changed position buffer shared by shadow and beauty updates once instead of
-twice, with identical captured output. The small-instancing UBO upload remains:
-this experiment does not address unversioned raw uniform buffers or bone uploads.
-These are diagnostic counts, not speedup/FPS measurements.
+Range forwarding can increase calls for a sparse changed version while reducing
+bytes; it uses the backend's existing per-range behavior. Unchanged uploads then
+disappear. These are diagnostic counts, not a timing benchmark or an FPS claim.
+The small-instancing raw UBO write remains; bone/uniform pooling is out of scope.
 
-## Confirmed compatibility failures
+### Additional existing bug fixed: source array replacement
 
-### 1. Matrix TSL attributes lose even explicitly published source updates
+The matrix fixture also replaces the source with a same-size array, changes its
+translation, and sets `source.needsUpdate = true`. The original runtime keeps
+uploading the old array and leaves the triangle visible. The follow-up correctly
+uses the replacement and moves it offscreen. Both pairs show the expected 1,014
+changed image bytes. This stage is an improvement over an existing baseline bug,
+not an image-parity success or a newly introduced regression.
 
-The fixture supplies three per-vertex matrices through:
+### Remaining compatibility difference: unversioned raw arrays
 
-```js
-const source = new BufferAttribute( matrices, 16 ).setUsage( DynamicDrawUsage );
-const transform = dynamicBufferAttribute( source, 'mat4' );
-material.positionNode = transform.mul( vec4( positionLocal, 1 ) ).xyz;
+`dynamicBufferAttribute( typedArray, 'vec3' )` still freezes after an unpublished
+raw-array mutation under the version-driven rule. The original automatically
+updates. Both pairs reproduce 1,014 differing bytes. Raw arrays have no source
+version to forward; preserving automatic behavior or requiring explicit versioned
+input remains an API decision. This patch does not silently choose a replacement
+notification API or claim this difference is fixed.
 
-// After initial rendering:
-// ...change the matrices...
-source.needsUpdate = true;
-```
-
-The control moves the triangle; the patch leaves its initial position unchanged.
-The same result occurs in both pairs, with 1,014 differing image bytes each time.
-The patch issues no matrix upload even though `source.version` increments.
-
-Reason: `createBufferAttribute()` splits a mat4 into vec4 attribute nodes.
-`BufferAttributeNode` only directly preserves BufferAttributes with itemSize <=4.
-Larger sources go through `_getBufferAttribute(source.array, stride)`, which
-creates an internal `InterleavedBuffer`. The original source version is not
-forwarded to that internal buffer. Previously, DynamicDrawUsage forced its upload
-and masked the missing propagation. Removing the OR exposes it.
-
-This finding is specific to matrix wrappers. Direct vec3 BufferAttributes retain
-their original identity/version and passed the rendered update test. The current
-InstancedMesh helper has separate version forwarding and also passed.
-
-### 2. Raw TypedArray automatic updates stop
-
-`dynamicBufferAttribute( typedArray, 'vec3' )` currently uploads subsequent raw
-array mutations without a published attribute version. The control updates; the
-patch freezes the original data. Again, both pairs show 1,014 differing bytes.
-This is the expected behavior change when removing automatic updating, but it
-needs an explicit API-compatibility decision, not silent treatment as a bug fix.
-
-## Assessment
-
-The version-driven rule is a reasonable simplification, but **the bare deletion
-cannot yet be called generally correct**. At minimum, matrix source-version
-forwarding needs a correctness fix; it is not merely a future optimization. Raw
-TypedArray automatic-update compatibility also needs a deliberate decision.
-Keep these findings separate from any broader resource pooling/update redesign.
-
-Prior art: Three.js PRs [#28697](https://github.com/mrdoob/three.js/pull/28697),
-[#28704](https://github.com/mrdoob/three.js/pull/28704),
-[#28716](https://github.com/mrdoob/three.js/pull/28716), and
-[#26057](https://github.com/mrdoob/three.js/pull/26057).
+Prior art remains relevant: [#26057](https://github.com/mrdoob/three.js/pull/26057),
+[#28697](https://github.com/mrdoob/three.js/pull/28697),
+[#28704](https://github.com/mrdoob/three.js/pull/28704), and
+[#28716](https://github.com/mrdoob/three.js/pull/28716). Automatic dynamic uploads
+are established behavior, not an undisputed accidental bug.
 
 ## Local evidence and reproduction
 
-Primary artifacts:
+Follow-up artifacts (initial evidence remains under `/tmp/three-dynamic-*`):
 
-- `/tmp/three-dynamic-baseline-test.log`: original core suite, before adding tests.
-- `/tmp/three-dynamic-patched-test-final.log`: final default suite.
-- `/tmp/three-dynamic-{baseline,patched}-addons.log`: complete add-on results.
-- `/tmp/three-dynamic-{control,patched}-hw-final.json`: full hardware test results.
-- `/tmp/three-dynamic-regression-{before,after}-final.json`: focused results.
-- `/tmp/three-dynamic-render-{control,patch}-r{1,2}.json`: all fixture images/counts.
-- `/tmp/three-dynamic-render-comparison.json`: exact paired comparisons.
-- `/tmp/three-dynamic-unit.mjs`, `/tmp/three-dynamic-render.mjs`, and
-  `/tmp/three-dynamic-compare.mjs`: local browser/aggregation scripts.
-- `/tmp/three-dynamic-Attributes.baseline.js`: original runtime control source.
+- `/tmp/three-forward-{npm-ci,npm-test-clean,addons-clean,build-clean,test-lint}.log`.
+- `/tmp/three-forward-targeted-final.json`: 15 focused passes.
+- `/tmp/three-forward-no-forward-final.json`: eight passes/seven negative-control
+  failures without source forwarding.
+- `/tmp/three-forward-hardware-full-clean.json`: complete patched hardware suite.
+- `/tmp/three-forward-hardware-control-full.json`: original-runtime control.
+- `/tmp/three-forward-render-{control,patch}-r{1,2}.json`: images and write counts.
+- `/tmp/three-forward-render-comparison.json`: assertions and exact comparisons.
+- `/tmp/three-forward-{unit,render,compare}.mjs`: temporary browser/analysis tools.
+- `/tmp/three-dynamic-{Attributes,BufferAttributeNode}.baseline.js`: control files.
 
-Examples (scripts use local absolute paths):
+Commands from the experiment worktree (temporary scripts use absolute paths):
 
 ```sh
 PUPPETEER_EXECUTABLE_PATH=/tmp/cod-native-symbols/opt/google/chrome-beta/chrome npm test
-MESA_VK_DEVICE_SELECT=1002:7550! node /tmp/three-dynamic-unit.mjs /tmp/targeted.json Common
-MESA_VK_DEVICE_SELECT=1002:7550! node /tmp/three-dynamic-render.mjs patch /tmp/render.json
-node /tmp/three-dynamic-compare.mjs
+PUPPETEER_EXECUTABLE_PATH=/tmp/cod-native-symbols/opt/google/chrome-beta/chrome npm run test-unit-addons
+MESA_VK_DEVICE_SELECT=1002:7550! node /tmp/three-forward-unit.mjs /tmp/targeted.json Common
+MESA_VK_DEVICE_SELECT=1002:7550! node /tmp/three-forward-unit.mjs /tmp/negative.json Common UnitTests.html --no-forward
+MESA_VK_DEVICE_SELECT=1002:7550! node /tmp/three-forward-render.mjs patch /tmp/render.json
+node /tmp/three-forward-compare.mjs
 ```
 
-Initial filtered invocations of the stock unit runner produced no tests because
-its CLI splits the testPage argument on every `=`, truncating a query-string
-filter. The separate runner uses the same test page with a correctly formed URL;
-no production test-runner change was needed. An initial fixture favicon 404 was
-fixed by serving an empty favicon; the four final captures have zero errors.
+The stock unit runner splits query-string arguments on every `=`, so the separate
+runner loads the unchanged test page with a correctly formed filter URL. No
+production test-runner change was needed. These local rendering fixtures are not
+a committed, portable examples screenshot harness, and do not establish desktop
+performance or exhaustive application compatibility.
